@@ -18,7 +18,7 @@ services:
       retries: 5
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.12.1
     volumes:
       - qdrantdata:/qdrant/storage
     ports:
@@ -32,10 +32,6 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/threadgraph
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
     env_file: .env
     volumes:
       - ./backend:/app

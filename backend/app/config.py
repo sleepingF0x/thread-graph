@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
 
-    database_url: str
+    database_url: str = "postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/threadgraph"
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
 

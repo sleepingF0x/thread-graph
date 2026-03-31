@@ -63,6 +63,9 @@ async def start_listener(client: TelegramClient) -> None:
         if group_id is None:
             return
         async with AsyncSessionLocal() as session:
+            group = await session.get(Group, group_id)
+            if group is None or not group.is_active:
+                return
             await save_message(session, event.message, group_id)
             logger.info(f"Saved message {event.message.id} from group {group_id}")
 

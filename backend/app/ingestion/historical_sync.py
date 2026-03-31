@@ -81,16 +81,19 @@ async def sync_worker_loop() -> None:
     """Background loop: picks up pending sync jobs."""
     logger.info("Historical sync worker started")
     while True:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(SyncJob)
-                .where(SyncJob.status == "pending")
-                .order_by(SyncJob.created_at)
-                .limit(1)
-            )
-            job = result.scalar_one_or_none()
-
-            if job:
-                await run_sync_job(session, job)
-            else:
-                await asyncio.sleep(10)
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(SyncJob)
+                    .where(SyncJob.status == "pending")
+                    .order_by(SyncJob.created_at)
+                    .limit(1)
+                )
+                job = result.scalar_one_or_none()
+                if job:
+                    await run_sync_job(session, job)
+                else:
+                    await asyncio.sleep(10)
+        except Exception as e:
+            logger.error(f"sync_worker_loop error: {e}", exc_info=True)
+            await asyncio.sleep(10)

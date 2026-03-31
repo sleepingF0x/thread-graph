@@ -108,7 +108,7 @@ async def pending_slice_loop() -> None:
 # ── Pipeline: process confirmed slices ───────────────────────────────────────
 
 async def process_slice(session: AsyncSession, slice_obj) -> None:
-    """Run the full pipeline on one slice."""
+    """Run the full pipeline on one slice. Idempotent via done flags."""
     import anthropic
     from app.config import settings
     from app.embedding import get_embedding_client
@@ -120,6 +120,7 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
     from app.models.slice import SliceMessage
     from app.models.topic import Topic, SliceTopic
     from app.models.term import Term
+    from sqlalchemy import update as sa_update
 
     result = await session.execute(
         select(SliceMessage)
@@ -161,113 +162,130 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
     ]
     term_context = build_system_context(confirmed_terms)
 
-    # 1. Generate slice summary
     claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    slice_summary = await summarize_slice(claude, texts)
-    slice_obj.summary = slice_summary
-    slice_obj.llm_done = True
-    await session.commit()
 
-    # 2. Generate embedding
+    # Step 1: Slice summary (skip if already done)
+    if not slice_obj.llm_done:
+        slice_summary = await summarize_slice(claude, texts)
+        slice_obj.summary = slice_summary
+        slice_obj.llm_done = True
+        await session.commit()
+    else:
+        slice_summary = slice_obj.summary or ""
+
+    # Step 2: Embedding (always regenerate — not stored in PG)
     embedder = get_embedding_client()
     summary_with_context = f"{term_context}\n\n{slice_summary}" if term_context else slice_summary
     embeddings = await embedder.embed([summary_with_context])
     embedding = embeddings[0]
-    slice_obj.embedding_model = settings.embedding_model
-    slice_obj.pg_done = True
-    await session.commit()
 
-    # 3. Upsert to Qdrant + find similar topic
-    qdrant = await get_qdrant()
-    topic_id_str = await find_similar_topic(qdrant, slice_obj.group_id, embedding)
+    if not slice_obj.pg_done:
+        slice_obj.embedding_model = settings.embedding_model
+        slice_obj.pg_done = True
+        await session.commit()
 
-    topic = None
-    if topic_id_str:
-        from uuid import UUID as UUIDType
-        topic = await session.get(Topic, UUIDType(topic_id_str))
-
-    if topic is None:
-        topic_name = await generate_topic_name(claude, slice_summary)
-        topic = Topic(
-            id=uuid4(),
-            group_id=slice_obj.group_id,
-            name=topic_name,
-            summary=None,
-            is_active=True,
-            slice_count=0,
-        )
-        session.add(topic)
-        await session.flush()
-
-    # 4. Incremental topic summary update
-    new_summary = await update_topic_summary(
-        claude,
-        topic_name=topic.name or "",
-        current_summary=topic.summary,
-        new_slice_summary=slice_summary,
+    # Step 3: Find or create topic (check if already linked)
+    existing_link_result = await session.execute(
+        select(SliceTopic).where(SliceTopic.slice_id == slice_obj.id)
     )
-    topic.summary = new_summary
-    topic.summary_version += 1
-    topic.slice_count += 1
-    topic.llm_model = "claude-sonnet-4-6"
-    topic.time_end = slice_obj.time_end
-    if topic.time_start is None:
-        topic.time_start = slice_obj.time_start
+    existing_link = existing_link_result.scalar_one_or_none()
 
-    # 5. Link slice → topic
-    session.add(SliceTopic(
-        slice_id=slice_obj.id,
-        topic_id=topic.id,
-        similarity=None,
-    ))
+    if existing_link is not None:
+        # Already linked — just reload the topic
+        topic = await session.get(Topic, existing_link.topic_id)
+    else:
+        qdrant = await get_qdrant()
+        topic_id_str = await find_similar_topic(qdrant, slice_obj.group_id, embedding)
 
-    # 6. Upsert embedding with topic_id in payload
-    await upsert_slice_embedding(
-        qdrant,
-        slice_id=slice_obj.id,
-        embedding=embedding,
-        payload={
-            "group_id": slice_obj.group_id,
-            "time_start": slice_obj.time_start.isoformat() if slice_obj.time_start else None,
-            "time_end": slice_obj.time_end.isoformat() if slice_obj.time_end else None,
-            "topic_id": str(topic.id),
-            "summary_preview": slice_summary[:100],
-        },
-    )
-    slice_obj.qdrant_done = True
+        topic = None
+        if topic_id_str:
+            from uuid import UUID as UUIDType
+            topic = await session.get(Topic, UUIDType(topic_id_str))
 
-    # 7. Extract jargon
-    new_terms = await extract_terms(claude, texts, slice_obj.group_id)
-    for term_data in new_terms:
-        existing = await session.execute(
-            select(Term).where(
-                Term.word == term_data["word"],
-                Term.group_id == term_data["group_id"],
-            )
-        )
-        if existing.scalar_one_or_none() is None:
-            session.add(Term(
+        if topic is None:
+            topic_name = await generate_topic_name(claude, slice_summary)
+            topic = Topic(
                 id=uuid4(),
-                word=term_data["word"],
-                meanings=term_data["meanings"],
-                examples=term_data["examples"],
-                status="auto",
-                needs_review=term_data["needs_review"],
-                group_id=term_data["group_id"],
-                llm_model="claude-sonnet-4-6",
-            ))
+                group_id=slice_obj.group_id,
+                name=topic_name,
+                summary=None,
+                is_active=True,
+                slice_count=0,
+            )
+            session.add(topic)
+            await session.flush()
+
+        # Incremental topic summary update
+        new_summary = await update_topic_summary(
+            claude,
+            topic_name=topic.name or "",
+            current_summary=topic.summary,
+            new_slice_summary=slice_summary,
+        )
+        topic.summary = new_summary
+        topic.summary_version += 1
+        topic.slice_count += 1
+        topic.llm_model = "claude-sonnet-4-6"
+        topic.time_end = slice_obj.time_end
+        if topic.time_start is None:
+            topic.time_start = slice_obj.time_start
+
+        session.add(SliceTopic(
+            slice_id=slice_obj.id,
+            topic_id=topic.id,
+            similarity=None,
+        ))
+
+    # Step 4: Qdrant upsert (idempotent by slice_id)
+    if not slice_obj.qdrant_done:
+        qdrant = await get_qdrant()
+        await upsert_slice_embedding(
+            qdrant,
+            slice_id=slice_obj.id,
+            embedding=embedding,
+            payload={
+                "group_id": slice_obj.group_id,
+                "time_start": slice_obj.time_start.isoformat() if slice_obj.time_start else None,
+                "time_end": slice_obj.time_end.isoformat() if slice_obj.time_end else None,
+                "topic_id": str(topic.id),
+                "summary_preview": slice_summary[:100],
+            },
+        )
+        slice_obj.qdrant_done = True
+
+    # Step 5: Extract jargon (skip if already processed)
+    if slice_obj.status != "processed":
+        new_terms = await extract_terms(claude, texts, slice_obj.group_id)
+        for term_data in new_terms:
+            existing = await session.execute(
+                select(Term).where(
+                    Term.word == term_data["word"],
+                    Term.group_id == term_data["group_id"],
+                )
+            )
+            if existing.scalar_one_or_none() is None:
+                session.add(Term(
+                    id=uuid4(),
+                    word=term_data["word"],
+                    meanings=term_data["meanings"],
+                    examples=term_data["examples"],
+                    status="auto",
+                    needs_review=term_data["needs_review"],
+                    group_id=term_data["group_id"],
+                    llm_model="claude-sonnet-4-6",
+                ))
 
     slice_obj.status = "processed"
     await session.commit()
-    logger.info(f"Processed slice {slice_obj.id} → topic '{topic.name}'")
+    logger.info(f"Processed slice {slice_obj.id} → topic '{topic.name if topic else 'unknown'}'")
 
     try:
         await manager.broadcast(
             event="topic_updated",
             payload={
-                "topic_id": str(topic.id),
-                "group_id": topic.group_id,
-                "name": topic.name,
+                "topic_id": str(topic.id) if topic else "",
+                "group_id": slice_obj.group_id,
+                "name": topic.name if topic else "",
                 "slice_id": str(slice_obj.id),
             },
             dedup_key=str(slice_obj.id),
@@ -278,6 +296,15 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
 
 async def pipeline_loop() -> None:
     logger.info("Pipeline loop started")
+    # On startup, reset any slices stuck in "processing" back to "pending"
+    async with AsyncSessionLocal() as session:
+        from app.models.slice import Slice
+        from sqlalchemy import update
+        await session.execute(
+            update(Slice).where(Slice.status == "processing").values(status="pending")
+        )
+        await session.commit()
+
     while True:
         try:
             from app.models.slice import Slice
@@ -287,10 +314,13 @@ async def pipeline_loop() -> None:
                     .where(Slice.status == "pending")
                     .order_by(Slice.created_at)
                     .limit(1)
+                    .with_for_update(skip_locked=True)
                 )
                 slice_obj = result.scalar_one_or_none()
 
                 if slice_obj:
+                    slice_obj.status = "processing"
+                    await session.commit()
                     await process_slice(session, slice_obj)
                 else:
                     await asyncio.sleep(PIPELINE_SLEEP)

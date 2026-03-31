@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update, nullslast
+from sqlalchemy import select, update, nullslast, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -61,13 +61,13 @@ async def list_topics(
 @router.get("/groups/{group_id}/topics/{topic_id}")
 async def get_topic_detail(
     group_id: int,
-    topic_id: str,
+    topic_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
     # Load topic with slice_topics -> slice -> messages chain
     stmt = (
         select(Topic)
-        .where(Topic.id == UUID(topic_id), Topic.group_id == group_id)
+        .where(Topic.id == topic_id, Topic.group_id == group_id)
         .options(
             selectinload(Topic.slices)
             .selectinload(SliceTopic.slice)
@@ -84,21 +84,28 @@ async def get_topic_detail(
     for st in topic.slices:
         sl = st.slice
         # Collect message_ids for this slice, ordered by position
-        msg_refs = sorted(sl.messages, key=lambda m: m.position)
+        refs = sorted(sl.messages, key=lambda m: m.position)
 
-        messages_out = []
-        for ref in msg_refs:
-            # Load the actual message row (composite PK: id + group_id)
-            msg = await db.get(Message, (ref.message_id, ref.group_id))
-            if msg is not None:
-                messages_out.append(
-                    {
-                        "id": msg.id,
-                        "text": msg.text,
-                        "ts": msg.ts,
-                        "sender_id": msg.sender_id,
-                    }
-                )
+        if refs:
+            pairs = [(r.message_id, r.group_id) for r in refs]
+            rows = (await db.execute(
+                select(Message).where(tuple_(Message.id, Message.group_id).in_(pairs))
+            )).scalars().all()
+            msg_map = {(m.id, m.group_id): m for m in rows}
+            messages_out = []
+            for r in refs:
+                msg = msg_map.get((r.message_id, r.group_id))
+                if msg is not None:
+                    messages_out.append(
+                        {
+                            "id": r.message_id,
+                            "text": msg.text,
+                            "ts": msg.ts,
+                            "sender_id": msg.sender_id,
+                        }
+                    )
+        else:
+            messages_out = []
 
         slices_out.append(
             {
@@ -162,16 +169,16 @@ async def list_active_topics(
 
 @router.post("/topics/{topic_id}/reprocess")
 async def reprocess_topic(
-    topic_id: str,
+    topic_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    topic = await db.get(Topic, UUID(topic_id))
+    topic = await db.get(Topic, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
     # Find all slice IDs linked to this topic
     st_result = await db.execute(
-        select(SliceTopic.slice_id).where(SliceTopic.topic_id == UUID(topic_id))
+        select(SliceTopic.slice_id).where(SliceTopic.topic_id == topic_id)
     )
     slice_ids = st_result.scalars().all()
 
@@ -189,4 +196,4 @@ async def reprocess_topic(
     topic.summary_version = 0
     await db.commit()
 
-    return {"topic_id": topic_id, "slices_reset": slices_reset}
+    return {"topic_id": str(topic_id), "slices_reset": slices_reset}

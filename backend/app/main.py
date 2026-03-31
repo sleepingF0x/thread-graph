@@ -16,6 +16,7 @@ async def lifespan(app: FastAPI):
     await init_collections()
     from app.ingestion.telegram_client import get_client, is_authorized
     from app.ingestion.realtime_listener import start_listener
+    from app.ingestion.historical_sync import sync_worker_loop
 
     try:
         client = await get_client()
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Telegram not authorized — use /auth/verify to log in.")
     except Exception as e:
         logger.warning(f"Telegram client init failed: {e}. Use /auth/verify to log in.")
+
+    asyncio.create_task(sync_worker_loop())
     yield
 
 

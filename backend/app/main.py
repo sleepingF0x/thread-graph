@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Thread Graph", lifespan=lifespan)
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
+from app.api.groups import router as groups_router
+app.include_router(groups_router, prefix="/groups", tags=["groups"])
 
 
 @app.get("/health")

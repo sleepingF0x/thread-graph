@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_collections()
+    try:
+        await init_collections()
+    except Exception as e:
+        logger.warning(f"Qdrant init failed (collections will be created on first use): {e}")
 
     from app.ingestion.telegram_client import get_client, is_authorized
     from app.ingestion.realtime_listener import start_listener

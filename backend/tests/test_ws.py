@@ -1,16 +1,33 @@
 import json
 import threading
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
-from app.main import app
+# Patch all external services before the app's lifespan fires so the
+# TestClient can start without a running Qdrant or Telegram.
+_STARTUP_PATCHES = [
+    # init_collections is imported at the top of main.py so patch it there
+    patch("app.main.init_collections", new_callable=AsyncMock),
+    # these are imported locally inside the lifespan, so patch at source
+    patch("app.ingestion.telegram_client.get_client", new_callable=AsyncMock),
+    patch("app.ingestion.telegram_client.is_authorized", new=AsyncMock(return_value=False)),
+    patch("app.ingestion.historical_sync.sync_worker_loop", new_callable=AsyncMock),
+    patch("app.worker.processor.pending_slice_loop", new_callable=AsyncMock),
+    patch("app.worker.processor.pipeline_loop", new_callable=AsyncMock),
+]
 
 
 @pytest.fixture(scope="module")
 def client():
+    for p in _STARTUP_PATCHES:
+        p.start()
+    from app.main import app
     with TestClient(app) as c:
         yield c
+    for p in _STARTUP_PATCHES:
+        p.stop()
 
 
 def test_websocket_connect_and_receive(client):

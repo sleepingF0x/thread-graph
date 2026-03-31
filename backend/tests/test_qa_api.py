@@ -237,6 +237,14 @@ async def test_qa_writes_session(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_qa_missing_question(db_session: AsyncSession):
+    """POST /qa without 'question' field returns 422."""
+    async with _aclient(db_session) as client:
+        resp = await client.post("/qa", json={})
+        assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_list_sessions_empty(db_session: AsyncSession):
     """GET /qa/sessions returns 200 and empty list when no sessions exist."""
     async with _aclient(db_session) as client:

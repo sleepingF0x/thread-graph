@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import anthropic
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, MatchValue
 from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,12 @@ from app.qdrant_client import SLICES_COLLECTION, get_qdrant
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class QaRequest(BaseModel):
+    question: str
+    group_id: Optional[int] = None
+    limit: int = 5
 
 
 # ---------------------------------------------------------------------------
@@ -45,12 +52,12 @@ def build_qa_prompt(question: str, contexts: list[dict]) -> str:
 
 @router.post("")
 async def ask_question(
-    body: dict,
+    req: QaRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    question: str = body["question"]
-    group_id: Optional[int] = body.get("group_id")
-    limit: int = body.get("limit", 5)
+    question: str = req.question
+    group_id: Optional[int] = req.group_id
+    limit: int = req.limit
 
     # 1. Generate embedding
     embedding_client = get_embedding_client()
@@ -127,12 +134,16 @@ async def ask_question(
         })
         slice_infos.append((sl, score, topic_id))
 
-    # 5. Build prompt
+    # 5. Guard against empty contexts after PG load
+    if not slice_infos:
+        return {"session_id": None, "answer": "没有找到相关内容", "sources": []}
+
+    # 6. Build prompt
     prompt = build_qa_prompt(question, contexts)
 
-    # 6. Call Claude (sync wrapped in executor)
+    # 7. Call Claude (sync wrapped in executor)
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    response = await asyncio.get_event_loop().run_in_executor(
+    response = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: client.messages.create(
             model="claude-sonnet-4-6",
@@ -142,7 +153,7 @@ async def ask_question(
     )
     answer_text = response.content[0].text
 
-    # 7. Write QaSession + QaContext rows
+    # 8. Write QaSession + QaContext rows
     session = QaSession(
         id=uuid4(),
         question=question,
@@ -164,7 +175,7 @@ async def ask_question(
 
     await db.commit()
 
-    # 8. Build response
+    # 9. Build response
     sources = []
     for sl, score, topic_id in slice_infos:
         sources.append({

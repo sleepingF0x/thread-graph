@@ -18,7 +18,10 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import anthropic
+
 from app.api.ws import manager
+from app.config import settings
 from app.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,16 @@ logger = logging.getLogger(__name__)
 PENDING_CHECK_INTERVAL = 300   # 5 minutes
 PIPELINE_SLEEP = 5             # seconds between pipeline polls
 SILENCE_WINDOW = timedelta(minutes=30)
+TOPIC_STALE_DAYS = 7           # mark topic inactive after this many days with no new slice
+
+_claude_client: anthropic.AsyncAnthropic | None = None
+
+
+def get_claude_client() -> anthropic.AsyncAnthropic:
+    global _claude_client
+    if _claude_client is None:
+        _claude_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _claude_client
 
 
 # ── Pending slice confirmation ────────────────────────────────────────────────
@@ -94,12 +107,33 @@ async def confirm_ready_pending_slices(session: AsyncSession) -> int:
     return created
 
 
+async def mark_stale_topics(session: AsyncSession) -> int:
+    """Mark topics inactive if they have had no new slices for TOPIC_STALE_DAYS days."""
+    from app.models.topic import Topic
+    from sqlalchemy import update
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=TOPIC_STALE_DAYS)
+    result = await session.execute(
+        update(Topic)
+        .where(Topic.is_active == True, Topic.time_end <= stale_cutoff)  # noqa: E712
+        .values(is_active=False)
+        .returning(Topic.id)
+    )
+    count = len(result.all())
+    if count:
+        await session.commit()
+        logger.info(f"Marked {count} topics as inactive (stale)")
+    return count
+
+
 async def pending_slice_loop() -> None:
     logger.info("Pending slice loop started")
     while True:
         try:
             async with AsyncSessionLocal() as session:
                 await confirm_ready_pending_slices(session)
+            async with AsyncSessionLocal() as session:
+                await mark_stale_topics(session)
         except Exception as e:
             logger.error(f"pending_slice_loop error: {e}")
         await asyncio.sleep(PENDING_CHECK_INTERVAL)
@@ -109,8 +143,6 @@ async def pending_slice_loop() -> None:
 
 async def process_slice(session: AsyncSession, slice_obj) -> None:
     """Run the full pipeline on one slice. Idempotent via done flags."""
-    import anthropic
-    from app.config import settings
     from app.embedding import get_embedding_client
     from app.qdrant_client import get_qdrant
     from app.pipeline.clusterer import find_similar_topic, upsert_slice_embedding
@@ -162,7 +194,7 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
     ]
     term_context = build_system_context(confirmed_terms)
 
-    claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    claude = get_claude_client()
 
     # Step 1: Slice summary (skip if already done)
     if not slice_obj.llm_done:

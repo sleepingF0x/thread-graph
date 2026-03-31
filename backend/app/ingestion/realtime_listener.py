@@ -53,7 +53,6 @@ async def save_message(
     ).on_conflict_do_nothing(index_elements=["id", "group_id"])
 
     await session.execute(stmt)
-    await session.commit()
 
 
 async def start_listener(client: TelegramClient) -> None:
@@ -67,6 +66,7 @@ async def start_listener(client: TelegramClient) -> None:
             if group is None or not group.is_active:
                 return
             await save_message(session, event.message, group_id)
+            await session.commit()
             logger.info(f"Saved message {event.message.id} from group {group_id}")
 
     logger.info("Real-time listener started")

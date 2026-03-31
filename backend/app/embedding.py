@@ -31,14 +31,20 @@ class EmbeddingClient:
         return results
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        return await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_running_loop().run_in_executor(
             None, self.embed_sync, texts
         )
 
 
+_embedding_client: EmbeddingClient | None = None
+
+
 def get_embedding_client() -> EmbeddingClient:
-    return EmbeddingClient(
-        base_url=settings.embedding_base_url,
-        api_key=settings.embedding_api_key,
-        model=settings.embedding_model,
-    )
+    global _embedding_client
+    if _embedding_client is None:
+        _embedding_client = EmbeddingClient(
+            base_url=settings.embedding_base_url,
+            api_key=settings.embedding_api_key,
+            model=settings.embedding_model,
+        )
+    return _embedding_client

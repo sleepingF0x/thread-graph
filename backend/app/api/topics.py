@@ -79,40 +79,44 @@ async def get_topic_detail(
     if topic is None:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    # For each slice, load messages and join with the messages table for text/ts/sender_id
-    slices_out = []
+    # Collect all (message_id, group_id) pairs across all slices in one pass,
+    # then fetch all messages in a single query (avoids N+1 per slice).
+    slice_refs_map: dict = {}
+    all_pairs: list[tuple[int, int]] = []
     for st in topic.slices:
         sl = st.slice
-        # Collect message_ids for this slice, ordered by position
         refs = sorted(sl.messages, key=lambda m: m.position)
+        slice_refs_map[sl.id] = (sl, refs)
+        all_pairs.extend((r.message_id, r.group_id) for r in refs)
 
-        if refs:
-            pairs = [(r.message_id, r.group_id) for r in refs]
-            rows = (await db.execute(
-                select(Message).where(tuple_(Message.id, Message.group_id).in_(pairs))
-            )).scalars().all()
-            msg_map = {(m.id, m.group_id): m for m in rows}
-            messages_out = []
-            for r in refs:
-                msg = msg_map.get((r.message_id, r.group_id))
-                if msg is not None:
-                    messages_out.append(
-                        {
-                            "id": r.message_id,
-                            "text": msg.text,
-                            "ts": msg.ts,
-                            "sender_id": msg.sender_id,
-                        }
-                    )
-        else:
-            messages_out = []
+    msg_map: dict[tuple[int, int], Message] = {}
+    if all_pairs:
+        rows = (await db.execute(
+            select(Message).where(tuple_(Message.id, Message.group_id).in_(all_pairs))
+        )).scalars().all()
+        msg_map = {(m.id, m.group_id): m for m in rows}
 
+    slices_out = []
+    for st in topic.slices:
+        sl, refs = slice_refs_map[st.slice.id]
+        messages_out = []
+        for r in refs:
+            msg = msg_map.get((r.message_id, r.group_id))
+            if msg is not None:
+                messages_out.append(
+                    {
+                        "id": r.message_id,
+                        "text": msg.text,
+                        "ts": msg.ts,
+                        "sender_id": msg.sender_id,
+                    }
+                )
         slices_out.append(
             {
-                "id": str(sl.id),
-                "time_start": sl.time_start,
-                "time_end": sl.time_end,
-                "summary": sl.summary,
+                "id": str(st.slice.id),
+                "time_start": st.slice.time_start,
+                "time_end": st.slice.time_end,
+                "summary": st.slice.summary,
                 "messages": messages_out,
             }
         )

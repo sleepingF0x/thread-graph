@@ -4,13 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
+from app.qdrant_client import init_collections
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ingestion worker will be added in Task 8
+    await init_collections()
     yield
-    # Shutdown
 
 
 app = FastAPI(title="Thread Graph", lifespan=lifespan)

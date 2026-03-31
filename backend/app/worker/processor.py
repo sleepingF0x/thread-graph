@@ -18,6 +18,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.ws import manager
 from app.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,20 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
     slice_obj.status = "processed"
     await session.commit()
     logger.info(f"Processed slice {slice_obj.id} → topic '{topic.name}'")
+
+    try:
+        await manager.broadcast(
+            event="topic_updated",
+            payload={
+                "topic_id": str(topic.id),
+                "group_id": topic.group_id,
+                "name": topic.name,
+                "slice_id": str(slice_obj.id),
+            },
+            dedup_key=str(slice_obj.id),
+        )
+    except Exception:
+        pass  # never let WS failure block pipeline
 
 
 async def pipeline_loop() -> None:

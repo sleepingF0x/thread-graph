@@ -6,6 +6,7 @@ from datetime import timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.ws import manager
 from app.database import AsyncSessionLocal
 from app.ingestion.realtime_listener import save_message
 from app.ingestion.telegram_client import get_client
@@ -47,6 +48,19 @@ async def run_sync_job(session: AsyncSession, job: SyncJob) -> None:
                 job.checkpoint_message_id = message.id
                 job.checkpoint_ts = message.date
                 await session.commit()
+                try:
+                    await manager.broadcast(
+                        event="sync_progress",
+                        payload={
+                            "job_id": str(job.id),
+                            "group_id": job.group_id,
+                            "checkpoint_message_id": job.checkpoint_message_id,
+                            "status": job.status,
+                        },
+                        dedup_key=f"sync_{job.id}_{job.checkpoint_message_id}",
+                    )
+                except Exception:
+                    pass
                 await asyncio.sleep(BATCH_SLEEP_SECONDS)
                 logger.info(f"SyncJob {job.id}: {count} messages synced")
 

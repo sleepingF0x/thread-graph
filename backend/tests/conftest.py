@@ -13,6 +13,7 @@ TEST_DATABASE_URL = "postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/
 async def db_session():
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.groups import router as groups_router
+from app.api.topics import router as topics_router
 from app.qdrant_client import init_collections
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Thread Graph", lifespan=lifespan)
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(groups_router, prefix="/groups", tags=["groups"])
+app.include_router(topics_router, tags=["topics"])
 
 
 @app.get("/health")

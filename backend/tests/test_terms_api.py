@@ -7,6 +7,7 @@ to inject the async test db_session fixture.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import pytest
@@ -28,12 +29,17 @@ def make_override(db_session: AsyncSession):
     return override_get_db
 
 
-async def _aclient(db_session: AsyncSession) -> httpx.AsyncClient:
+@asynccontextmanager
+async def _aclient(db_session: AsyncSession):
     app.dependency_overrides[get_db] = make_override(db_session)
-    return httpx.AsyncClient(
+    async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
-    )
+    ) as client:
+        try:
+            yield client
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +83,7 @@ async def _create_term(
 @pytest.mark.asyncio
 async def test_list_terms_empty(db_session: AsyncSession):
     """GET /terms returns 200 + empty list when no terms exist."""
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get("/terms")
     assert resp.status_code == 200
     assert resp.json() == []
@@ -90,7 +96,7 @@ async def test_list_terms_filter_needs_review(db_session: AsyncSession):
     await _create_term(db_session, word="no-review", needs_review=False)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get("/terms", params={"needs_review": "true"})
     assert resp.status_code == 200
     data = resp.json()
@@ -106,7 +112,7 @@ async def test_list_terms_filter_status(db_session: AsyncSession):
     await _create_term(db_session, word="confirmed-term", status="confirmed")
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get("/terms", params={"status": "confirmed"})
     assert resp.status_code == 200
     data = resp.json()
@@ -118,7 +124,7 @@ async def test_list_terms_filter_status(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_create_term(db_session: AsyncSession):
     """POST /terms creates a term with status=confirmed and needs_review=False."""
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.post(
             "/terms",
             json={
@@ -146,7 +152,7 @@ async def test_patch_term_status(db_session: AsyncSession):
     term = await _create_term(db_session, word="patchme", status="auto")
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.patch(
             f"/terms/{term.id}",
             json={"status": "confirmed"},
@@ -162,7 +168,7 @@ async def test_patch_term_status(db_session: AsyncSession):
 async def test_patch_term_not_found(db_session: AsyncSession):
     """PATCH /terms/{random-uuid} returns 404."""
     fake_id = str(uuid4())
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.patch(
             f"/terms/{fake_id}",
             json={"status": "confirmed"},

@@ -8,6 +8,7 @@ event loop so asyncpg connections stay valid.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -33,12 +34,17 @@ def make_override(db_session: AsyncSession):
     return override_get_db
 
 
-async def _aclient(db_session: AsyncSession) -> httpx.AsyncClient:
+@asynccontextmanager
+async def _aclient(db_session: AsyncSession):
     app.dependency_overrides[get_db] = make_override(db_session)
-    return httpx.AsyncClient(
+    async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
-    )
+    ) as client:
+        try:
+            yield client
+        finally:
+            app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +168,7 @@ async def test_list_topics_empty(db_session: AsyncSession):
     await _create_group(db_session, group_id=2001)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get("/groups/2001/topics")
     assert resp.status_code == 200
     assert resp.json() == []
@@ -180,7 +186,7 @@ async def test_list_topics_filtered(db_session: AsyncSession):
     await _create_topic(db_session, 2002, name="Late", time_end=late)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         # Only topics with time_end >= Feb 1 → should get "Late"
         resp = await client.get(
             "/groups/2002/topics", params={"from_ts": "2024-02-01T00:00:00Z"}
@@ -212,7 +218,7 @@ async def test_get_topic_detail(db_session: AsyncSession):
     await _link_message_to_slice(db_session, sl.id, 9001, 2003, position=0)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get(f"/groups/2003/topics/{topic.id}")
     assert resp.status_code == 200
     data = resp.json()
@@ -235,7 +241,7 @@ async def test_get_active_topics(db_session: AsyncSession):
     await _create_topic(db_session, 2004, name="Inactive Topic", is_active=False)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.get("/topics/active")
     assert resp.status_code == 200
     data = resp.json()
@@ -267,7 +273,7 @@ async def test_reprocess_topic(db_session: AsyncSession):
     await _link_slice_topic(db_session, sl2.id, topic.id)
     await db_session.commit()
 
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         resp = await client.post(f"/topics/{topic.id}/reprocess")
     assert resp.status_code == 200
     data = resp.json()
@@ -293,7 +299,7 @@ async def test_reprocess_topic(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_reprocess_topic_not_found(db_session: AsyncSession):
     """Returns 404 when topic does not exist."""
-    async with await _aclient(db_session) as client:
+    async with _aclient(db_session) as client:
         fake_id = str(uuid4())
         resp = await client.post(f"/topics/{fake_id}/reprocess")
     assert resp.status_code == 404

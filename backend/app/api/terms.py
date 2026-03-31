@@ -1,6 +1,6 @@
 # backend/app/api/terms.py
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,6 +47,8 @@ def _term_to_dict(t: Term) -> dict:
         "status": t.status,
         "needs_review": t.needs_review,
         "group_id": t.group_id,
+        "created_at": t.created_at,
+        "updated_at": t.updated_at,
     }
 
 
@@ -56,7 +58,7 @@ def _term_to_dict(t: Term) -> dict:
 
 @router.get("")
 async def list_terms(
-    status: str = "all",
+    status: Literal["auto", "confirmed", "rejected", "all"] = "all",
     needs_review: Optional[bool] = None,
     group_id: Optional[int] = None,
     limit: int = 50,

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.groups import router as groups_router
+from app.api.qa import router as qa_router
 from app.api.terms import router as terms_router
 from app.api.topics import router as topics_router
 from app.qdrant_client import init_collections
@@ -44,6 +45,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(groups_router, prefix="/groups", tags=["groups"])
 app.include_router(topics_router, tags=["topics"])
 app.include_router(terms_router, prefix="/terms", tags=["terms"])
+app.include_router(qa_router, prefix="/qa", tags=["qa"])
 
 
 @app.get("/health")

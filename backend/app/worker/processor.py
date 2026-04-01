@@ -18,11 +18,10 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import anthropic
-
 from app.api.ws import manager
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.llm import get_async_anthropic_client, get_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +29,6 @@ PENDING_CHECK_INTERVAL = 300   # 5 minutes
 PIPELINE_SLEEP = 5             # seconds between pipeline polls
 SILENCE_WINDOW = timedelta(minutes=30)
 TOPIC_STALE_DAYS = 7           # mark topic inactive after this many days with no new slice
-
-_claude_client: anthropic.AsyncAnthropic | None = None
-
-
-def get_claude_client() -> anthropic.AsyncAnthropic:
-    global _claude_client
-    if _claude_client is None:
-        _claude_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _claude_client
-
 
 # ── Pending slice confirmation ────────────────────────────────────────────────
 
@@ -194,7 +183,8 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
     ]
     term_context = build_system_context(confirmed_terms)
 
-    claude = get_claude_client()
+    claude = get_async_anthropic_client()
+    llm_model = get_llm_model()
 
     # Step 1: Slice summary (skip if already done)
     if not slice_obj.llm_done:
@@ -257,7 +247,7 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
         topic.summary = new_summary
         topic.summary_version += 1
         topic.slice_count += 1
-        topic.llm_model = "claude-sonnet-4-6"
+        topic.llm_model = llm_model
         topic.time_end = slice_obj.time_end
         if topic.time_start is None:
             topic.time_start = slice_obj.time_start
@@ -305,7 +295,7 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
                     status="auto",
                     needs_review=term_data["needs_review"],
                     group_id=term_data["group_id"],
-                    llm_model="claude-sonnet-4-6",
+                    llm_model=llm_model,
                 ))
 
     slice_obj.status = "processed"

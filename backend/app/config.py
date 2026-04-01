@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
 
     anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    llm_model: str = "claude-sonnet-4-6"
 
     embedding_base_url: str = "https://api.openai.com/v1"
     embedding_api_key: str = ""

@@ -6,16 +6,15 @@ import logging
 from typing import Optional
 from uuid import UUID, uuid4
 
-import anthropic
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, MatchValue
 from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import get_db
 from app.embedding import get_embedding_client
+from app.llm import get_llm_model, get_sync_anthropic_client
 from app.models.message import Message
 from app.models.slice import Slice, SliceMessage
 from app.models.sync_job import QaContext, QaSession
@@ -142,11 +141,12 @@ async def ask_question(
     prompt = build_qa_prompt(question, contexts)
 
     # 7. Call Claude (sync wrapped in executor)
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = get_sync_anthropic_client()
+    llm_model = get_llm_model()
     response = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm_model,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         ),
@@ -159,7 +159,7 @@ async def ask_question(
         question=question,
         answer=answer_text,
         group_id=group_id,
-        llm_model="claude-sonnet-4-6",
+        llm_model=llm_model,
     )
     db.add(session)
     await db.flush()

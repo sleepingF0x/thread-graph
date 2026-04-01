@@ -1,16 +1,17 @@
 # backend/app/pipeline/summarizer.py
 import logging
 
-logger = logging.getLogger(__name__)
+from app.llm import get_llm_model
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+logger = logging.getLogger(__name__)
 
 
 async def summarize_slice(client, messages: list[str]) -> str:
     """Generate a 1-2 sentence summary for a conversation slice."""
     text = "\n".join(messages)
+    llm_model = get_llm_model()
     response = await client.messages.create(
-        model=CLAUDE_MODEL,
+        model=llm_model,
         max_tokens=200,
         messages=[
             {
@@ -33,6 +34,7 @@ async def update_topic_summary(
     new_slice_summary: str,
 ) -> str:
     """Incrementally update a topic summary with a new slice."""
+    llm_model = get_llm_model()
     if current_summary:
         prompt = (
             f"Topic: {topic_name}\n\n"
@@ -49,7 +51,7 @@ async def update_topic_summary(
         )
 
     response = await client.messages.create(
-        model=CLAUDE_MODEL,
+        model=llm_model,
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -58,8 +60,9 @@ async def update_topic_summary(
 
 async def generate_topic_name(client, slice_summary: str) -> str:
     """Generate a short 3-5 word topic label in the language of the content."""
+    llm_model = get_llm_model()
     response = await client.messages.create(
-        model=CLAUDE_MODEL,
+        model=llm_model,
         max_tokens=20,
         messages=[
             {

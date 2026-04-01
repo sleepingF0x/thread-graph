@@ -177,7 +177,7 @@ async def test_qa_with_results(db_session: AsyncSession):
 
     with patch("app.api.qa.get_embedding_client", return_value=mock_embed_client), \
          patch("app.api.qa.get_qdrant", new=AsyncMock(return_value=mock_qdrant)), \
-         patch("app.api.qa.anthropic.Anthropic", return_value=mock_anthropic_client):
+         patch("app.api.qa.get_sync_anthropic_client", return_value=mock_anthropic_client):
         async with _aclient(db_session) as client:
             resp = await client.post("/qa", json={"question": "What happened?"})
 
@@ -214,7 +214,7 @@ async def test_qa_writes_session(db_session: AsyncSession):
 
     with patch("app.api.qa.get_embedding_client", return_value=mock_embed_client), \
          patch("app.api.qa.get_qdrant", new=AsyncMock(return_value=mock_qdrant)), \
-         patch("app.api.qa.anthropic.Anthropic", return_value=mock_anthropic_client):
+         patch("app.api.qa.get_sync_anthropic_client", return_value=mock_anthropic_client):
         async with _aclient(db_session) as client:
             resp = await client.post("/qa", json={"question": "DB test question"})
 

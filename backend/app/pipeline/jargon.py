@@ -2,9 +2,9 @@
 import json
 import logging
 
-logger = logging.getLogger(__name__)
+from app.llm import get_llm_model
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+logger = logging.getLogger(__name__)
 AUTO_CONFIRM_THRESHOLD = 0.8
 MAX_INJECTED_TERMS = 50
 
@@ -32,8 +32,9 @@ async def extract_terms(
         return []
 
     text = "\n".join(messages[:100])
+    llm_model = get_llm_model()
     response = await client.messages.create(
-        model=CLAUDE_MODEL,
+        model=llm_model,
         max_tokens=1000,
         messages=[
             {

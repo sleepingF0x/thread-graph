@@ -1,7 +1,6 @@
 # backend/app/ingestion/historical_sync.py
 import asyncio
 import logging
-from datetime import timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +31,7 @@ async def run_sync_job(session: AsyncSession, job: SyncJob) -> None:
             reverse=True,
             limit=None,
         ):
-            if job.from_ts and message.date < job.from_ts.replace(tzinfo=timezone.utc):
+            if job.from_ts and message.date < job.from_ts:
                 break
 
             if (

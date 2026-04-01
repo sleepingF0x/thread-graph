@@ -49,7 +49,10 @@ async def save_message(
         message_type=_get_message_type(message),
         raw_json=json.loads(message.to_json()),
         is_deleted=False,
-        ts=message.date.replace(tzinfo=timezone.utc) if message.date else datetime.now(timezone.utc),
+        ts=(
+            message.date if message.date.tzinfo is not None
+            else message.date.replace(tzinfo=timezone.utc)
+        ) if message.date else datetime.now(timezone.utc),
     ).on_conflict_do_nothing(index_elements=["id", "group_id"])
 
     await session.execute(stmt)

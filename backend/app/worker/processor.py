@@ -284,6 +284,7 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
             },
         )
         slice_obj.qdrant_done = True
+        await session.commit()
 
     # Step 5: Extract jargon (skip if already processed)
     if slice_obj.status != "processed":
@@ -338,6 +339,7 @@ async def pipeline_loop() -> None:
         await session.commit()
 
     while True:
+        slice_obj = None
         try:
             from app.models.slice import Slice
             async with AsyncSessionLocal() as session:
@@ -359,4 +361,15 @@ async def pipeline_loop() -> None:
 
         except Exception as e:
             logger.error(f"pipeline_loop error: {e}", exc_info=True)
+            if slice_obj is not None:
+                try:
+                    async with AsyncSessionLocal() as recovery:
+                        from app.models.slice import Slice
+                        stuck = await recovery.get(Slice, slice_obj.id)
+                        if stuck and stuck.status == "processing":
+                            stuck.status = "pending"
+                            await recovery.commit()
+                            logger.info(f"Reset stuck slice {slice_obj.id} to pending")
+                except Exception as recovery_err:
+                    logger.error(f"Failed to reset stuck slice {slice_obj.id}: {recovery_err}")
             await asyncio.sleep(PIPELINE_SLEEP)

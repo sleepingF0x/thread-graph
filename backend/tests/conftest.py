@@ -13,6 +13,10 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/threadgraph_test",
 )
 
+assert "test" in TEST_DATABASE_URL, (
+    f"Refusing to drop/recreate tables against a non-test database: {TEST_DATABASE_URL}"
+)
+
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session():

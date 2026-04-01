@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
@@ -23,7 +23,7 @@ class Slice(Base):
     llm_done: Mapped[bool] = mapped_column(Boolean, default=False)
     embedding_model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     messages: Mapped[list["SliceMessage"]] = relationship(back_populates="slice")

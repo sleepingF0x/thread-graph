@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
@@ -21,7 +21,7 @@ class SyncJob(Base):
     checkpoint_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     group: Mapped["Group"] = relationship(back_populates="sync_jobs")
@@ -36,7 +36,7 @@ class QaSession(Base):
     group_id: Mapped[int | None] = mapped_column(BigInteger)
     llm_model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
     context: Mapped[list["QaContext"]] = relationship(back_populates="session")

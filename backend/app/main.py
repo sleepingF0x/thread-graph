@@ -38,10 +38,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Telegram client init failed: {e}")
 
-    asyncio.create_task(sync_worker_loop())
-    asyncio.create_task(pending_slice_loop())
-    asyncio.create_task(pipeline_loop())
+    tasks = [
+        asyncio.create_task(sync_worker_loop(), name="sync_worker"),
+        asyncio.create_task(pending_slice_loop(), name="pending_slice"),
+        asyncio.create_task(pipeline_loop(), name="pipeline"),
+    ]
     yield
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Thread Graph", lifespan=lifespan)

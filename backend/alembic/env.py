@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -16,9 +17,15 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def get_url() -> str:
+    # DATABASE_URL env var takes precedence over alembic.ini (used in CI and production)
+    return os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(
+        url=get_url(), target_metadata=target_metadata, literal_binds=True
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -30,8 +37,10 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
+    cfg = config.get_section(config.config_ini_section, {})
+    cfg["sqlalchemy.url"] = get_url()
     connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        cfg,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

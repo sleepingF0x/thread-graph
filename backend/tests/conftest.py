@@ -6,7 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.database import Base
 import app.models  # noqa: register all models
 
-TEST_DATABASE_URL = "postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/threadgraph_test"
+import os
+
+TEST_DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://threadgraph:threadgraph@postgres:5432/threadgraph_test",
+)
 
 
 @pytest_asyncio.fixture(scope="function")

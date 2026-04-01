@@ -69,6 +69,17 @@ export interface SyncJob {
 
 export interface AuthStatus {
   authorized: boolean
+  configured: boolean
+  detail: string | null
+}
+
+export interface TelegramDialog {
+  raw_id: number | null
+  dialog_id: number
+  name: string | null
+  username: string | null
+  type: string
+  is_group_like: boolean
 }
 
 export interface WsEvent {

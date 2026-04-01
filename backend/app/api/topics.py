@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update, nullslast, tuple_
+from sqlalchemy import delete, select, update, nullslast, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,7 +30,7 @@ async def list_topics(
     to_ts: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Topic).where(Topic.group_id == group_id)
+    stmt = select(Topic).where(Topic.group_id == group_id, Topic.slice_count > 0)
     if from_ts is not None:
         stmt = stmt.where(Topic.time_end >= from_ts)
     if to_ts is not None:
@@ -145,7 +145,7 @@ async def list_active_topics(
     stmt = (
         select(Topic, Group.name.label("group_name"))
         .join(Group, Group.id == Topic.group_id)
-        .where(Topic.is_active == True)  # noqa: E712
+        .where(Topic.is_active == True, Topic.slice_count > 0)  # noqa: E712
         .order_by(nullslast(Topic.time_end.desc()))
         .limit(limit)
     )
@@ -189,14 +189,25 @@ async def reprocess_topic(
     slices_reset = 0
     if slice_ids:
         await db.execute(
+            delete(SliceTopic).where(SliceTopic.slice_id.in_(slice_ids))
+        )
+        await db.execute(
             update(Slice)
             .where(Slice.id.in_(slice_ids))
-            .values(status="pending", pg_done=False, qdrant_done=False, llm_done=False)
+            .values(
+                status="pending",
+                pg_done=False,
+                qdrant_done=False,
+                llm_done=False,
+                summary="",
+            )
         )
         slices_reset = len(slice_ids)
 
     # Reset topic metadata
     topic.summary = ""
+    topic.name = ""
+    topic.slice_count = 0
     topic.summary_version = 0
     await db.commit()
 

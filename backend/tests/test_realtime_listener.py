@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 @pytest.mark.asyncio
 async def test_save_message_inserts_row(db_session):
     from app.ingestion.realtime_listener import save_message
-    from app.models.message import Message
+    from app.models.message import Message, PendingSliceMessage
     from app.models.group import Group
 
     # FK requirement: group must exist before inserting message
@@ -30,3 +30,7 @@ async def test_save_message_inserts_row(db_session):
     assert result is not None
     assert result.text == "hello world"
     assert result.group_id == 99
+
+    pending = await db_session.get(PendingSliceMessage, (99, 12345))
+    assert pending is not None
+    assert pending.ts == datetime(2026, 1, 1, tzinfo=timezone.utc)

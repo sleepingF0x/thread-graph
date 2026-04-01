@@ -74,3 +74,17 @@ async def test_build_term_context_prompt_includes_confirmed_terms():
     context = build_system_context(confirmed)
     assert "kol" in context
     assert "key opinion leader" in context
+
+
+@pytest.mark.asyncio
+async def test_extract_terms_skips_empty_first_content_block():
+    from app.pipeline.jargon import extract_terms
+
+    mock_client = MagicMock()
+    payload = {"terms": []}
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=None), MagicMock(text=json.dumps(payload))]
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+    terms = await extract_terms(mock_client, messages=["test"], group_id=1)
+    assert terms == []

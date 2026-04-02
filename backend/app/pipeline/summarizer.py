@@ -1,16 +1,32 @@
 # backend/app/pipeline/summarizer.py
 import logging
 
-from app.llm import get_llm_model
+from app.llm import create_text_message, extract_text_content, get_llm_model
 
 logger = logging.getLogger(__name__)
+
+
+def fallback_topic_name(text: str) -> str:
+    normalized = " ".join((text or "").split()).strip()
+    if not normalized:
+        return "未命名话题"
+
+    if any("\u4e00" <= char <= "\u9fff" for char in normalized):
+        for sep in ("。", "！", "？", "\n"):
+            normalized = normalized.replace(sep, " ")
+        compact = normalized.replace("，", " ").replace("、", " ")
+        return compact[:12].strip() or "未命名话题"
+
+    words = normalized.split()
+    return " ".join(words[:4]).strip() or "Untitled Topic"
 
 
 async def summarize_slice(client, messages: list[str]) -> str:
     """Generate a 1-2 sentence summary for a conversation slice."""
     text = "\n".join(messages)
     llm_model = get_llm_model()
-    response = await client.messages.create(
+    response = await create_text_message(
+        client,
         model=llm_model,
         max_tokens=200,
         messages=[
@@ -24,7 +40,7 @@ async def summarize_slice(client, messages: list[str]) -> str:
             }
         ],
     )
-    return response.content[0].text.strip()
+    return extract_text_content(response) or fallback_topic_name(slice_summary)
 
 
 async def update_topic_summary(
@@ -50,20 +66,22 @@ async def update_topic_summary(
             "Write a 2-3 sentence summary of this topic."
         )
 
-    response = await client.messages.create(
+    response = await create_text_message(
+        client,
         model=llm_model,
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
-    return response.content[0].text.strip()
+    return extract_text_content(response)
 
 
 async def generate_topic_name(client, slice_summary: str) -> str:
     """Generate a short 3-5 word topic label in the language of the content."""
     llm_model = get_llm_model()
-    response = await client.messages.create(
+    response = await create_text_message(
+        client,
         model=llm_model,
-        max_tokens=20,
+        max_tokens=64,
         messages=[
             {
                 "role": "user",
@@ -75,4 +93,4 @@ async def generate_topic_name(client, slice_summary: str) -> str:
             }
         ],
     )
-    return response.content[0].text.strip()
+    return extract_text_content(response)

@@ -10,7 +10,7 @@ from telethon.tl.types import Message as TelethonMessage
 
 from app.database import AsyncSessionLocal
 from app.models.group import Group
-from app.models.message import Message
+from app.models.message import Message, PendingSliceMessage
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,11 @@ async def save_message(
     if message.reply_to:
         reply_to_id = getattr(message.reply_to, "reply_to_msg_id", None)
 
+    message_ts = (
+        message.date if message.date.tzinfo is not None
+        else message.date.replace(tzinfo=timezone.utc)
+    ) if message.date else datetime.now(timezone.utc)
+
     stmt = insert(Message).values(
         id=message.id,
         group_id=group_id,
@@ -49,13 +54,18 @@ async def save_message(
         message_type=_get_message_type(message),
         raw_json=json.loads(message.to_json()),
         is_deleted=False,
-        ts=(
-            message.date if message.date.tzinfo is not None
-            else message.date.replace(tzinfo=timezone.utc)
-        ) if message.date else datetime.now(timezone.utc),
+        ts=message_ts,
     ).on_conflict_do_nothing(index_elements=["id", "group_id"])
 
     await session.execute(stmt)
+
+    pending_stmt = insert(PendingSliceMessage).values(
+        group_id=group_id,
+        message_id=message.id,
+        ts=message_ts,
+    ).on_conflict_do_nothing(index_elements=["group_id", "message_id"])
+
+    await session.execute(pending_stmt)
 
 
 async def start_listener(client: TelegramClient) -> None:

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 
+from telethon.tl.types import PeerChannel, PeerChat
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +10,7 @@ from app.api.ws import manager
 from app.database import AsyncSessionLocal
 from app.ingestion.realtime_listener import save_message
 from app.ingestion.telegram_client import get_client
+from app.models.group import Group
 from app.models.sync_job import SyncJob
 
 logger = logging.getLogger(__name__)
@@ -17,21 +19,36 @@ BATCH_SIZE = 500
 BATCH_SLEEP_SECONDS = 0.5
 
 
+async def _resolve_history_target(session: AsyncSession, group_id: int):
+    group = await session.get(Group, group_id)
+    if group is None:
+        return group_id
+
+    if group.type in {"channel", "supergroup"}:
+        return PeerChannel(group_id)
+    if group.type == "group":
+        return PeerChat(group_id)
+    return group_id
+
+
 async def run_sync_job(session: AsyncSession, job: SyncJob) -> None:
+    from app.worker.processor import confirm_ready_pending_slices
+
     job.status = "running"
     await session.commit()
 
     client = await get_client()
+    history_target = await _resolve_history_target(session, job.group_id)
 
     try:
         count = 0
         async for message in client.iter_messages(
-            job.group_id,
-            offset_date=job.to_ts,
+            history_target,
+            offset_date=job.from_ts,
             reverse=True,
             limit=None,
         ):
-            if job.from_ts and message.date < job.from_ts:
+            if job.to_ts and message.date > job.to_ts:
                 break
 
             if (
@@ -62,6 +79,9 @@ async def run_sync_job(session: AsyncSession, job: SyncJob) -> None:
                     pass
                 await asyncio.sleep(BATCH_SLEEP_SECONDS)
                 logger.info(f"SyncJob {job.id}: {count} messages synced")
+
+        if count > 0:
+            await confirm_ready_pending_slices(session)
 
         job.status = "done"
         job.checkpoint_message_id = None

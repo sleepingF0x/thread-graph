@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.embedding import get_embedding_client
-from app.llm import get_llm_model, get_sync_anthropic_client
+from app.llm import create_sync_text_message, extract_text_content, get_llm_model, get_sync_anthropic_client
 from app.models.message import Message
 from app.models.slice import Slice, SliceMessage
 from app.models.sync_job import QaContext, QaSession
@@ -145,13 +145,14 @@ async def ask_question(
     llm_model = get_llm_model()
     response = await asyncio.get_running_loop().run_in_executor(
         None,
-        lambda: client.messages.create(
+        lambda: create_sync_text_message(
+            client,
             model=llm_model,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         ),
     )
-    answer_text = response.content[0].text
+    answer_text = extract_text_content(response)
 
     # 8. Write QaSession + QaContext rows
     session = QaSession(

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getAuthStatus, sendLoginCode, verifyCode } from '../api/auth'
+import { getAuthStatus, getTelegramDialogs, sendLoginCode, verifyCode } from '../api/auth'
+import { getApiErrorMessage } from '../api/client'
 import { getGroups, addGroup, removeGroup } from '../api/groups'
 
 export default function Settings() {
@@ -18,14 +19,25 @@ export default function Settings() {
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
+  const [dialogSearch, setDialogSearch] = useState('')
+
+  const authConfigMessage =
+    authStatus?.configured === false
+      ? '请先在项目根目录 .env 中配置 TELEGRAM_API_ID 和 TELEGRAM_API_HASH，然后重启 backend 容器。'
+      : ''
 
   const handleSendCode = async () => {
     setLoginError('')
     try {
       await sendLoginCode(phone)
       setCodeSent(true)
-    } catch {
-      setLoginError('发送验证码失败，请检查手机号格式')
+    } catch (error) {
+      const message = getApiErrorMessage(error, '发送验证码失败')
+      setLoginError(
+        message.includes('Telegram API credentials are not configured')
+          ? authConfigMessage || message
+          : message
+      )
     }
   }
 
@@ -39,10 +51,26 @@ export default function Settings() {
       setCode('')
       setPassword('')
       refetchAuth()
-    } catch {
-      setLoginError('验证失败，请检查验证码')
+    } catch (error) {
+      const message = getApiErrorMessage(error, '验证失败')
+      setLoginError(
+        message.includes('Telegram API credentials are not configured')
+          ? authConfigMessage || message
+          : message
+      )
     }
   }
+
+  const {
+    data: telegramDialogs = [],
+    error: dialogsError,
+    isLoading: dialogsLoading,
+    refetch: refetchDialogs,
+  } = useQuery({
+    queryKey: ['telegram-dialogs'],
+    queryFn: getTelegramDialogs,
+    enabled: authStatus?.authorized === true && authStatus?.configured === true,
+  })
 
   // --- Groups ---
   const { data: groups = [] } = useQuery({
@@ -60,6 +88,44 @@ export default function Settings() {
   const [newGroupName, setNewGroupName] = useState('')
   const [newGroupType, setNewGroupType] = useState('group')
   const [addResult, setAddResult] = useState('')
+
+  const normalizedDialogSearch = dialogSearch.trim().toLowerCase()
+  const filteredDialogs = telegramDialogs
+    .filter((dialog) => {
+      if (!normalizedDialogSearch) return true
+
+      const haystacks = [
+        dialog.name ?? '',
+        dialog.username ?? '',
+        String(dialog.raw_id ?? ''),
+        String(dialog.dialog_id),
+      ]
+
+      return haystacks.some((value) => value.toLowerCase().includes(normalizedDialogSearch))
+    })
+    .sort((a, b) => {
+      if (a.is_group_like !== b.is_group_like) {
+        return a.is_group_like ? -1 : 1
+      }
+      return (a.name ?? '').localeCompare(b.name ?? '', 'zh-CN')
+    })
+
+  const handleSelectDialog = (dialog: {
+    raw_id: number | null
+    name: string | null
+    type: string
+  }) => {
+    if (dialog.raw_id === null) return
+
+    setNewGroupId(String(dialog.raw_id))
+    setNewGroupName(dialog.name ?? '')
+    setNewGroupType(
+      dialog.type === 'channel' || dialog.type === 'supergroup' || dialog.type === 'group'
+        ? dialog.type
+        : 'group'
+    )
+    setAddResult('已将该会话信息填入下方表单')
+  }
 
   const handleAddGroup = async () => {
     if (!newGroupId || !newGroupName) return
@@ -82,7 +148,21 @@ export default function Settings() {
       <section className="bg-white rounded-lg border border-gray-200 p-5">
         <h2 className="text-sm font-semibold text-gray-700 mb-4">Telegram 连接</h2>
 
-        {authStatus?.authorized && !showLoginForm ? (
+        {authStatus?.configured === false ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
+            <p className="text-sm text-amber-900 font-medium">Telegram API 尚未配置</p>
+            <p className="text-sm text-amber-800">
+              请先在项目根目录 <code className="bg-amber-100 px-1 rounded">.env</code> 中填写
+              <code className="bg-amber-100 px-1 rounded ml-1">TELEGRAM_API_ID</code>
+              和
+              <code className="bg-amber-100 px-1 rounded ml-1">TELEGRAM_API_HASH</code>
+              ，然后重启 backend 容器。
+            </p>
+            {authStatus.detail && (
+              <p className="text-xs text-amber-700 break-all">{authStatus.detail}</p>
+            )}
+          </div>
+        ) : authStatus?.authorized && !showLoginForm ? (
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500"></span>
             <span className="text-sm text-gray-700">已连接</span>
@@ -152,6 +232,73 @@ export default function Settings() {
       {/* Section 2: 群组管理 */}
       <section className="bg-white rounded-lg border border-gray-200 p-5">
         <h2 className="text-sm font-semibold text-gray-700 mb-4">群组管理</h2>
+
+        {authStatus?.authorized && (
+          <div className="mb-5 rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">查找 Telegram 会话</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  可按名称、用户名或 ID 搜索。点击结果会自动填入下方表单。
+                </p>
+              </div>
+              <button
+                onClick={() => refetchDialogs()}
+                className="px-3 py-1.5 text-xs border border-gray-300 rounded text-gray-600 hover:bg-white"
+              >
+                刷新列表
+              </button>
+            </div>
+
+            <input
+              value={dialogSearch}
+              onChange={(e) => setDialogSearch(e.target.value)}
+              placeholder="搜索群名、@username 或 ID"
+              className="block w-full border rounded px-3 py-2 text-sm bg-white"
+            />
+
+            {dialogsLoading ? (
+              <p className="text-sm text-gray-500">正在加载 Telegram 会话…</p>
+            ) : dialogsError ? (
+              <div className="space-y-2">
+                <p className="text-sm text-red-500">
+                  {getApiErrorMessage(dialogsError, '加载 Telegram 会话失败')}
+                </p>
+                <p className="text-xs text-gray-500">你仍然可以手动填写下方群组 ID。</p>
+              </div>
+            ) : filteredDialogs.length > 0 ? (
+              <div className="max-h-80 overflow-y-auto rounded border border-gray-200 bg-white">
+                {filteredDialogs.map((dialog) => (
+                  <div
+                    key={`${dialog.dialog_id}-${dialog.raw_id ?? 'na'}`}
+                    className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-3 last:border-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800 break-words">
+                        {dialog.name || '(未命名会话)'}
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
+                        <span>类型: {dialog.type}</span>
+                        {dialog.username && <span>@{dialog.username}</span>}
+                        <span>raw_id: {dialog.raw_id ?? '不可用'}</span>
+                        <span>dialog_id: {dialog.dialog_id}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleSelectDialog(dialog)}
+                      disabled={dialog.raw_id === null}
+                      className="shrink-0 px-3 py-1.5 rounded text-xs border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-transparent"
+                    >
+                      选择
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">没有匹配的会话。</p>
+            )}
+          </div>
+        )}
 
         {groups.length > 0 ? (
           <table className="w-full text-sm">

@@ -1,12 +1,14 @@
-# backend/app/config.py
+from typing import Any
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    telegram_api_id: int = 0
-    telegram_api_hash: str = ""
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
 
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
@@ -22,6 +24,13 @@ class Settings(BaseSettings):
     qdrant_port: int = 6333
 
     session_path: str = "session/threadgraph"
+
+    @field_validator("telegram_api_id", "telegram_api_hash", mode="before")
+    @classmethod
+    def _blank_telegram_settings_are_unset(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
 
 settings = Settings()

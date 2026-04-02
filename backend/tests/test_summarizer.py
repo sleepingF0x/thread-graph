@@ -64,3 +64,16 @@ async def test_generate_topic_name():
 
     name = await generate_topic_name(mock_client, slice_summary="Discussion about GPT-5")
     assert name == "AI 进展"
+
+
+@pytest.mark.asyncio
+async def test_summarize_slice_skips_empty_first_content_block():
+    from app.pipeline.summarizer import summarize_slice
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=None), MagicMock(text="  usable summary  ")]
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+    result = await summarize_slice(mock_client, messages=["msg1"])
+    assert result == "usable summary"

@@ -2,7 +2,7 @@
 import json
 import logging
 
-from app.llm import get_llm_model
+from app.llm import create_text_message, extract_text_content, get_llm_model
 
 logger = logging.getLogger(__name__)
 AUTO_CONFIRM_THRESHOLD = 0.8
@@ -33,7 +33,8 @@ async def extract_terms(
 
     text = "\n".join(messages[:100])
     llm_model = get_llm_model()
-    response = await client.messages.create(
+    response = await create_text_message(
+        client,
         model=llm_model,
         max_tokens=1000,
         messages=[
@@ -44,7 +45,9 @@ async def extract_terms(
         ],
     )
 
-    raw = response.content[0].text.strip()
+    raw = extract_text_content(response)
+    if not raw:
+        return []
 
     # Strip markdown code blocks if present
     if raw.startswith("```"):

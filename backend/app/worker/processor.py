@@ -237,6 +237,10 @@ async def process_slice(session: AsyncSession, slice_obj) -> None:
             session.add(topic)
             await session.flush()
 
+    if topic is not None and not (topic.name or "").strip():
+        topic.name = await generate_topic_name(claude, slice_summary)
+
+    if existing_link is None:
         # Incremental topic summary update
         new_summary = await update_topic_summary(
             claude,
